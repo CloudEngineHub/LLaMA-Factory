@@ -30,7 +30,7 @@ from typing_extensions import override
 
 from ...extras.constants import IGNORE_INDEX
 from ...extras.packages import is_transformers_version_equal_to_4_46
-from ..callbacks import PissaConvertCallback, SaveProcessorCallback
+from ..callbacks import SaveProcessorCallback
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler, get_batch_logps
 
 
@@ -79,6 +79,7 @@ class CustomDPOTrainer(DPOTrainer):
         self.simpo_gamma = finetuning_args.simpo_gamma
 
         Trainer.__init__(self, model=model, **kwargs)
+        self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
         if not hasattr(self, "accelerator"):
             raise AttributeError("Please update `transformers`.")
 
@@ -96,9 +97,6 @@ class CustomDPOTrainer(DPOTrainer):
 
         if processor is not None:
             self.add_callback(SaveProcessorCallback(processor))
-
-        if finetuning_args.pissa_convert:
-            self.callback_handler.add_callback(PissaConvertCallback)
 
         if finetuning_args.use_badam:
             from badam import BAdamCallback, clip_grad_norm_old_version  # type: ignore
@@ -277,15 +275,14 @@ class CustomDPOTrainer(DPOTrainer):
         self, model: "PreTrainedModel", inputs: Dict[str, "torch.Tensor"], return_outputs: bool = False, **kwargs
     ) -> Union["torch.Tensor", Tuple["torch.Tensor", List["torch.Tensor"]]]:
         r"""
-        Fixes the loss value for transformers 4.46.0.
-        https://github.com/huggingface/transformers/blob/v4.46.0/src/transformers/trainer.py#L3605
+        Fixes the loss value. See https://github.com/huggingface/transformers/pull/35438 for details.
         """
         loss = super().compute_loss(model, inputs, return_outputs)
-        if is_transformers_version_equal_to_4_46() and kwargs.pop("num_items_in_batch", False):
+        if is_transformers_version_equal_to_4_46() and kwargs.get("num_items_in_batch"):
             if return_outputs:
-                return (loss[0] / self.args.gradient_accumulation_steps, *loss[1:])
+                loss = (loss[0] / self.args.gradient_accumulation_steps, *loss[1:])
             else:
-                return loss / self.args.gradient_accumulation_steps
+                loss = loss / self.args.gradient_accumulation_steps
 
         return loss
 

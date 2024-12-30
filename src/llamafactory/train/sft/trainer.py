@@ -27,8 +27,8 @@ from typing_extensions import override
 
 from ...extras import logging
 from ...extras.constants import IGNORE_INDEX
-from ...extras.packages import is_transformers_version_equal_to_4_46, is_transformers_version_greater_than
-from ..callbacks import PissaConvertCallback, SaveProcessorCallback
+from ...extras.packages import is_transformers_version_greater_than
+from ..callbacks import SaveProcessorCallback
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler
 
 
@@ -62,9 +62,6 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         if processor is not None:
             self.add_callback(SaveProcessorCallback(processor))
 
-        if finetuning_args.pissa_convert:
-            self.add_callback(PissaConvertCallback)
-
         if finetuning_args.use_badam:
             from badam import BAdamCallback, clip_grad_norm_old_version  # type: ignore
 
@@ -96,16 +93,14 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         self, model: "PreTrainedModel", inputs: Dict[str, "torch.Tensor"], return_outputs: bool = False, **kwargs
     ) -> Union["torch.Tensor", Tuple["torch.Tensor", List["torch.Tensor"]]]:
         r"""
-        Fixes the loss value for transformers 4.46.0.
-        https://github.com/huggingface/transformers/blob/v4.46.0/src/transformers/trainer.py#L3605
+        Fixes the loss value. See https://github.com/huggingface/transformers/pull/35438 for details.
         """
         loss = super().compute_loss(model, inputs, return_outputs, **kwargs)
-        if is_transformers_version_equal_to_4_46() and not getattr(self, "model_accepts_loss_kwargs", False):
-            # other model should not scale the loss
+        if kwargs.get("num_items_in_batch") and not getattr(self, "model_accepts_loss_kwargs", False):
             if return_outputs:
-                return (loss[0] / self.args.gradient_accumulation_steps, *loss[1:])
+                loss = (loss[0] / self.args.gradient_accumulation_steps, *loss[1:])
             else:
-                return loss / self.args.gradient_accumulation_steps
+                loss = loss / self.args.gradient_accumulation_steps
 
         return loss
 
